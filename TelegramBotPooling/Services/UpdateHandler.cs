@@ -106,7 +106,7 @@ public class UpdateHandler : IUpdateHandler
 
         if (response?.Values != null && response.Values.Any())
         {
-            var batchedRows = BatchHelper.Batch(response.Values.Skip(960), 100);
+            var batchedRows = BatchHelper.Batch(response.Values.Skip(1), 10);
 
             foreach (var batch in batchedRows)
             {
