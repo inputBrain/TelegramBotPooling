@@ -30,6 +30,7 @@ IHost host = Host.CreateDefaultBuilder(args)
                 throw new Exception("\n\n -----ERROR ATTENTION! ----- \n Config 'GoogleSheet' is null or does not exist. \n\n");
             }
 
+            services.Configure<GoogleSheetConfig>(hostContext.Configuration.GetSection("GoogleSheet"));
 
             var botClient = new TelegramBotClient(telegramConfig.BotToken);
 
