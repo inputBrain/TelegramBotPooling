@@ -3,22 +3,18 @@ using System.Collections.Generic;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Extensions.Configuration;
 using Telegram.Bot;
 using Telegram.Bot.Types.Enums;
-using TelegramBotPooling.Configs;
 
 namespace TelegramBotPooling.Services;
 
 public class MessageService : IMessageService
 {
     private readonly ITelegramBotClient _botClient;
-    private readonly IConfiguration _configuration;
 
-    public MessageService(ITelegramBotClient botClient, IConfiguration configuration)
+    public MessageService(ITelegramBotClient botClient)
     {
         _botClient = botClient;
-        _configuration = configuration;
     }
 
 
@@ -89,12 +85,6 @@ public class MessageService : IMessageService
 
     private async Task _sendMessagePart(string message, long chatId, CancellationToken cancellationToken)
     {
-        var workerConfig = _configuration.GetSection("Worker").Get<WorkerConfig>();
-        if (workerConfig!.IsDebugModeOn)
-        {
-            Console.WriteLine(message);
-            return;
-        }
         await _botClient.SendTextMessageAsync(chatId, message, cancellationToken: cancellationToken, disableWebPagePreview: true, parseMode: ParseMode.Html);
     }
 }
