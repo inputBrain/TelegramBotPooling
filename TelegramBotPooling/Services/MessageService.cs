@@ -3,25 +3,29 @@ using System.Collections.Generic;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Options;
 using Telegram.Bot;
 using Telegram.Bot.Types.Enums;
+using TelegramBotPooling.Configs;
 
 namespace TelegramBotPooling.Services;
 
 public class MessageService : IMessageService
 {
     private readonly ITelegramBotClient _botClient;
+    private readonly GoogleSheetConfig _googleSheetConfig;
 
-    public MessageService(ITelegramBotClient botClient)
+    public MessageService(ITelegramBotClient botClient, IOptions<GoogleSheetConfig> googleSheetConfig)
     {
         _botClient = botClient;
+        _googleSheetConfig = googleSheetConfig.Value;
     }
 
 
     public async Task SendInfo(Dictionary<string, (int totalLinks, int accessibleLinks)>  linksGroupByNameAndThemCount, int openedLinksCount, long chatId, CancellationToken cancellationToken)
     {
         var header = "<b>Info!</b>\n" +
-                     "<b>From:</b> Google tabs <a href=\"https://docs.google.com/spreadsheets/d/1GR64t3cbiDYEtHFIiU9mxKoJvXYF304nqhgsVDxQ4MI/edit#gid=0/\">MWA - Avto Test link</a> \n" +
+                     $"<b>From:</b> Google tabs <a href=\"{_googleSheetConfig.GoogleSheetHref}/\">{_googleSheetConfig.GoogleSheetTestName}</a> \n" +
                      "<b>Message:</b> Daily test\n\n" +
                      $"<b>Context:</b> Accessible links count: {openedLinksCount}\n";
 
@@ -53,7 +57,7 @@ public class MessageService : IMessageService
     public async Task SendError(Dictionary<string, List<string>> linksWithNames, int notOpenedLinksCount, long chatId, CancellationToken cancellationToken)
     {
         var header = "<b>Error!</b>\n" +
-                     "<b>From:</b> Google tabs <a href=\"https://docs.google.com/spreadsheets/d/1GR64t3cbiDYEtHFIiU9mxKoJvXYF304nqhgsVDxQ4MI/edit#gid=0\">MWA - Avto Test link</a> \n" +
+                     $"<b>From:</b> Google tabs <a href=\"{_googleSheetConfig.GoogleSheetHref}\">{_googleSheetConfig.GoogleSheetTestName}</a> \n" +
                      "<b>Message:</b> The links have stopped working \n\n" +
                      $"<b>Context:</b> Not Accessible links count: {notOpenedLinksCount}\n";
 
