@@ -74,9 +74,9 @@ public class UpdateHandler : IUpdateHandler
 
         var action = messageText.Split(' ')[0] switch
         {
-            "/forcestart"                           => StartWebsiteHandler(_botClient, message, cancellationToken),
-            "/forcestart@AxLinkKeyboard_bot"        => StartWebsiteHandler(_botClient, message, cancellationToken),
-            _                                       => throw new ArgumentOutOfRangeException()
+            "/forcestart"                                      => StartWebsiteHandler(_botClient, message, cancellationToken),
+            "/forcestart@notification_ax_link_test_bot"        => StartWebsiteHandler(_botClient, message, cancellationToken),
+            _                                                  => throw new ArgumentOutOfRangeException()
         };
         var sentMessage = await action;
         _logger.LogInformation("The message was sent with id: {SentMessageId}", sentMessage.MessageId);
