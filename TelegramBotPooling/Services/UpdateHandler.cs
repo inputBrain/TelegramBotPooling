@@ -5,6 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Telegram.Bot;
 using Telegram.Bot.Exceptions;
 using Telegram.Bot.Polling;
@@ -18,17 +19,27 @@ namespace TelegramBotPooling.Services;
 public class UpdateHandler : IUpdateHandler
 {
     private readonly ILogger<UpdateHandler> _logger;
-    private readonly IConfiguration _configuration;
+    private readonly GoogleSheetConfig _googleSheetConfig;
+    private readonly TelegramBotConfig _telegramBotConfig;
     private readonly ITelegramBotClient _botClient;
     private readonly IMessageService _messageService;
     private readonly IBaseParser _baseParser;
     private readonly IWebsiteHeadersHandler _websiteHeadersHandler;
 
 
-    public UpdateHandler(ILogger<UpdateHandler> logger, IConfiguration configuration, ITelegramBotClient botClient, IMessageService messageService, IBaseParser baseParser, IWebsiteHeadersHandler websiteHeadersHandler)
+    public UpdateHandler(
+        ILogger<UpdateHandler> logger,
+        IOptions<GoogleSheetConfig> googleSheetConfig,
+        IOptions<TelegramBotConfig> telegramBotConfig,
+        ITelegramBotClient botClient,
+        IMessageService messageService,
+        IBaseParser baseParser,
+        IWebsiteHeadersHandler websiteHeadersHandler
+    )
     {
         _logger = logger;
-        _configuration = configuration;
+        _googleSheetConfig = googleSheetConfig.Value;
+        _telegramBotConfig = telegramBotConfig.Value;
         _botClient = botClient;
         _messageService = messageService;
         _baseParser = baseParser;
@@ -38,11 +49,16 @@ public class UpdateHandler : IUpdateHandler
 
     public async Task HandleUpdateAsync(ITelegramBotClient _, Update update, CancellationToken cancellationToken)
     {
-        var botConfig = _configuration.GetSection("TelegramBot").Get<TelegramBotConfig>()!;
+        _logger.LogInformation("Username {Username} with Id {Id} | sent a message: {Message}",
+            update.Message!.From!.Username,
+            update.Message.From.Id,
+            update.Message.Text
+        );
+
         var handler = update switch
         {
-            { Message: { } message }                       => BotOnMessageReceived(botConfig, message, cancellationToken),
-            { EditedMessage: { } message }                 => BotOnMessageReceived(botConfig, message, cancellationToken),
+            { Message: { } message }                       => BotOnMessageReceived(message, cancellationToken),
+            { EditedMessage: { } message }                 => BotOnMessageReceived(message, cancellationToken),
             _ => throw new ArgumentOutOfRangeException(nameof(update), update, null)
         };
 
@@ -50,7 +66,7 @@ public class UpdateHandler : IUpdateHandler
     }
 
 
-    private async Task BotOnMessageReceived(TelegramBotConfig botConfig, Message message, CancellationToken cancellationToken)
+    private async Task BotOnMessageReceived(Message message, CancellationToken cancellationToken)
     {
         _logger.LogInformation("Receive message type: {MessageType}", message.Type);
         if (message.Text is not { } messageText)
@@ -58,31 +74,29 @@ public class UpdateHandler : IUpdateHandler
 
         var action = messageText.Split(' ')[0] switch
         {
-            "/forcestart"                           => StartWebsiteHandler(_botClient, botConfig, message, cancellationToken),
-            "/forcestart@AxLinkKeyboard_bot"        => StartWebsiteHandler(_botClient, botConfig, message, cancellationToken),
+            "/forcestart"                           => StartWebsiteHandler(_botClient, message, cancellationToken),
+            "/forcestart@AxLinkKeyboard_bot"        => StartWebsiteHandler(_botClient, message, cancellationToken),
             _                                       => throw new ArgumentOutOfRangeException()
         };
         var sentMessage = await action;
         _logger.LogInformation("The message was sent with id: {SentMessageId}", sentMessage.MessageId);
     }
 
-    public  async Task<Message> StartWebsiteHandler(ITelegramBotClient botClient, TelegramBotConfig botConfig, Message message, CancellationToken cancellationToken)
+    public  async Task<Message> StartWebsiteHandler(ITelegramBotClient botClient, Message message, CancellationToken cancellationToken)
     {
-        var googleSheetConfig = _configuration.GetSection("GoogleSheet").Get<GoogleSheetConfig>();
-
         var accessibleLinksCount = 0;
         var notAccessibleLinksCount = 0;
 
         var linksGroupByCategoryAndThemCount = new ConcurrentDictionary<string, (int totalLinks, int accessibleLinks)>();
         var linksWithNames = new ConcurrentDictionary<string, ConcurrentBag<string>>();
 
-        var apiUrl = $"https://sheets.googleapis.com/v4/spreadsheets/{googleSheetConfig!.SheetId}/values/{googleSheetConfig.Range}?key={googleSheetConfig.ApiKey}";
+        var apiUrl = $"https://sheets.googleapis.com/v4/spreadsheets/{_googleSheetConfig!.SheetId}/values/{_googleSheetConfig.Range}?key={_googleSheetConfig.ApiKey}";
         var response = await _baseParser.ParseGet<Sheet1>(apiUrl, cancellationToken);
 
         var linkCount = response!.Values.Skip(1).Count(row => row.Count > 3 && !string.IsNullOrEmpty(row[3]?.ToString()));
         var calculatedTime = linkCount / 40;
 
-        await botClient.SendTextMessageAsync(chatId: botConfig.PrivateChatId, text: $"-- Process has been started by command -- \nApproximate time to complete:  ~{calculatedTime} minutes ", cancellationToken: cancellationToken);
+        await botClient.SendTextMessageAsync(chatId: _telegramBotConfig.PrivateChatId, text: $"-- Process has been started by command -- \nApproximate time to complete:  ~{calculatedTime} minutes ", cancellationToken: cancellationToken);
 
         _logger.LogInformation(
             "\n ===== Google Sheet. response.Values.Skip(1).Count: {Count} | Response.Values.Count: {ValueCount} ===== \n",
@@ -92,7 +106,7 @@ public class UpdateHandler : IUpdateHandler
 
         if (response?.Values != null && response.Values.Any())
         {
-            var batchedRows = BatchHelper.Batch(response.Values.Skip(1), 10);
+            var batchedRows = BatchHelper.Batch(response.Values.Skip(960), 100);
 
             foreach (var batch in batchedRows)
             {
@@ -148,11 +162,11 @@ public class UpdateHandler : IUpdateHandler
             }
         }
 
-        await _messageService.SendInfo(linksGroupByCategoryAndThemCount.ToDictionary(data => data.Key, data => data.Value), accessibleLinksCount, botConfig!.PrivateChatId, cancellationToken);
-        await _messageService.SendError(linksWithNames.ToDictionary(data => data.Key, data => data.Value.ToList()), notAccessibleLinksCount, botConfig.PrivateChatId, cancellationToken);
+        await _messageService.SendInfo(linksGroupByCategoryAndThemCount.ToDictionary(data => data.Key, data => data.Value), accessibleLinksCount, _telegramBotConfig!.PrivateChatId, cancellationToken);
+        await _messageService.SendError(linksWithNames.ToDictionary(data => data.Key, data => data.Value.ToList()), notAccessibleLinksCount, _telegramBotConfig.PrivateChatId, cancellationToken);
 
         return await botClient.SendTextMessageAsync(
-            chatId: botConfig.PrivateChatId,
+            chatId: _telegramBotConfig.PrivateChatId,
             text: "-- Process has been done --",
             cancellationToken: cancellationToken);
     }

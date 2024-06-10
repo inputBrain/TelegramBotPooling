@@ -31,6 +31,7 @@ IHost host = Host.CreateDefaultBuilder(args)
             }
 
             services.Configure<GoogleSheetConfig>(hostContext.Configuration.GetSection("GoogleSheet"));
+            services.Configure<TelegramBotConfig>(hostContext.Configuration.GetSection("TelegramBot"));
 
             var botClient = new TelegramBotClient(telegramConfig.BotToken);
 
