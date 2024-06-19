@@ -58,6 +58,12 @@ public class WebsiteHeadersHandler : IWebsiteHeadersHandler
             {
                 return true;
             }
+
+            if (response.Content.Headers.ContentLength == 0 && response.StatusCode != HttpStatusCode.RedirectMethod)
+            {
+                return false;
+            }
+
             if (response.Headers.TryGetValues("Connection", out var connectionValues))
             {
                 var enumerable = connectionValues as string[] ?? connectionValues.ToArray();
