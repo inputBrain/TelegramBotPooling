@@ -30,17 +30,17 @@ public class WebsiteHeadersHandler : IWebsiteHeadersHandler
             httpClientHandler.UseProxy = true;
 
             using var torHttpClient = new HttpClient(httpClientHandler);
-            torHttpClient.Timeout = TimeSpan.FromSeconds(60);
+            torHttpClient.Timeout = TimeSpan.FromSeconds(150);
 
             var cts = new CancellationTokenSource();
             var responseTask = torHttpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cts.Token);
-            var timeoutTask = Task.Delay(TimeSpan.FromSeconds(60), cts.Token);
+            var timeoutTask = Task.Delay(TimeSpan.FromSeconds(120), cts.Token);
             var completedTask = await Task.WhenAny(responseTask, timeoutTask);
 
             if (completedTask == timeoutTask)
             {
                 cts.Cancel();
-                _logger.LogCritical($"Site -------> {url} Timeout of 60 seconds elapsing. Returned false.");
+                _logger.LogCritical($"Site -------> {url} Timeout of 120 seconds elapsing. Returned false.");
                 return false;
             }
 
@@ -119,25 +119,14 @@ public class WebsiteHeadersHandler : IWebsiteHeadersHandler
     {
         string[] parkingIndicators = {
             "domain is for sale",
-            "related searches",
             "this domain is parked",
-            "the domain is parked",
             "buy this domain",
             "domain name for sale",
-            "click here to make an offer",
-            "this domain may be for sale",
-            "under construction",
-            "this site is under construction",
             "find available domain names",
-            "ads by google",
-            "sponsored listings",
-            "sponsored results",
             "advertiser links",
             "search results for",
             "top searches",
-            "click here to continue",
             "learn more about this domain",
-            "contact us for more information",
             "the domain owner has not yet uploaded a website"
         };
 
@@ -145,6 +134,7 @@ public class WebsiteHeadersHandler : IWebsiteHeadersHandler
         {
             if (content.Contains(indicator, StringComparison.OrdinalIgnoreCase))
             {
+                _logger.LogError("Parking indicator: {0}", indicator);
                 return true;
             }
         }

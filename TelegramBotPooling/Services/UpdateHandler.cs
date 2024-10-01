@@ -124,7 +124,6 @@ public class UpdateHandler : IUpdateHandler
                         linksGroupByCategoryAndThemCount.AddOrUpdate(category!, (1, 0), (key, value) => (value.totalLinks + 1, value.accessibleLinks));
 
                         var isAccessible = await _websiteHeadersHandler.HeaderHandlerAsync(link);
-                        _logger.LogInformation($"Site {link} is accessible: {isAccessible}");
 
                         if (isAccessible)
                         {
@@ -136,7 +135,6 @@ public class UpdateHandler : IUpdateHandler
                             await Task.Delay(TimeSpan.FromSeconds(10), cancellationToken);
 
                             isAccessible = await _websiteHeadersHandler.HeaderHandlerAsync(link);
-                            _logger.LogInformation($"\t\tAfter waiting for 10 seconds, one more request was sent. Is accessible: {isAccessible}");
 
                             if (isAccessible)
                             {
