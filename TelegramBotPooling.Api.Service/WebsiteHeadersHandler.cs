@@ -12,35 +12,36 @@ public class WebsiteHeadersHandler : IWebsiteHeadersHandler
 {
     private readonly ILogger<WebsiteHeadersHandler> _logger;
     private readonly HttpClient _client;
-
+    
+    private readonly HttpClient _torHttpClient;
 
     public WebsiteHeadersHandler(ILogger<WebsiteHeadersHandler> logger, HttpClient client)
     {
         _logger = logger;
         _client = client;
-    }
 
+        var httpClientHandler = new HttpClientHandler
+        {
+            Proxy = new TorProxyService("127.0.0.1", 9150),
+            UseProxy = true
+        };
+        _torHttpClient = new HttpClient(httpClientHandler);
+        _torHttpClient.Timeout = TimeSpan.FromSeconds(150);
+    }
 
     public async Task<bool> HeaderHandlerAsync(string url)
     {
         try
         {
-            using var httpClientHandler = new HttpClientHandler();
-            httpClientHandler.Proxy = new TorProxyService("127.0.0.1", 9150);
-            httpClientHandler.UseProxy = true;
-
-            using var torHttpClient = new HttpClient(httpClientHandler);
-            torHttpClient.Timeout = TimeSpan.FromSeconds(150);
-
             var cts = new CancellationTokenSource();
-            var responseTask = torHttpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cts.Token);
-            var timeoutTask = Task.Delay(TimeSpan.FromSeconds(120), cts.Token);
+            var responseTask = _torHttpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cts.Token);
+            var timeoutTask = Task.Delay(TimeSpan.FromSeconds(140), cts.Token);
             var completedTask = await Task.WhenAny(responseTask, timeoutTask);
 
             if (completedTask == timeoutTask)
             {
                 cts.Cancel();
-                _logger.LogCritical($"Site -------> {url} Timeout of 120 seconds elapsing. Returned false.");
+                _logger.LogCritical($" ===> {url} Timeout of 140 seconds elapsing. Returned false.");
                 return false;
             }
 
@@ -66,8 +67,8 @@ public class WebsiteHeadersHandler : IWebsiteHeadersHandler
             }
             if (response.Content.Headers.ContentLength == 0 && response.StatusCode != HttpStatusCode.RedirectMethod)
             {
-                _logger.LogCritical($"Returned FALSE in if(response.Content.Headers.ContentLength == 0 && response.StatusCode != HttpStatusCode.RedirectMethod) \nSite: {url} ");
-                return false;
+                _logger.LogWarning($" --- Possible white page. I will check it again \nSite: {url} ");
+                return true;
             }
 
             var finalUri = response.RequestMessage?.RequestUri?.ToString();
@@ -76,7 +77,6 @@ public class WebsiteHeadersHandler : IWebsiteHeadersHandler
             if (!string.IsNullOrEmpty(finalUri))
             {
                 var uri = new Uri(finalUri);
-                // var path = uri.AbsolutePath;
                 var path = uri.AbsolutePath.TrimEnd('/'); 
                 
                 if (path.Equals("/leader", StringComparison.OrdinalIgnoreCase))
@@ -98,18 +98,22 @@ public class WebsiteHeadersHandler : IWebsiteHeadersHandler
         }
         catch (TaskCanceledException)
         {
-            _logger.LogError($"Site -------> {url} TaskCanceledException. Timeout elapsing.");
+            _logger.LogError($" ===> {url} TaskCanceledException. Timeout elapsing.");
             return false;
         }
         catch (HttpRequestException e)
         {
-            _logger.LogWarning($"Site -------> {url} HttpRequestException: {e.Message}");
-
-            if (e.Message.Contains("The SSL connection could not be established"))
+            if (e.Message.Contains("The SSL connection could not be established") || e.Message.Contains("The request was aborted."))
             {
+                _logger.LogDebug($"DEBUG ===>>> {url} HttpRequestException: {e.Message}");
                 return true;
             }
 
+            _logger.LogCritical($" ===> {url} HttpRequestException: {e.Message}");
+            if (e.InnerException != null)
+            {
+                _logger.LogError("Inner Exception:{InnerException}: ",  e.InnerException.Message);
+            }
             return false;
         }
     }
@@ -124,7 +128,6 @@ public class WebsiteHeadersHandler : IWebsiteHeadersHandler
             "domain name for sale",
             "find available domain names",
             "advertiser links",
-            "search results for",
             "top searches",
             "learn more about this domain",
             "the domain owner has not yet uploaded a website"
