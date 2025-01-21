@@ -96,6 +96,24 @@ public class UpdateHandler : IUpdateHandler
         var linkCount = response!.Values.Skip(1).Count(row => row.Count > 3 && !string.IsNullOrEmpty(row[3]?.ToString()));
         var calculatedTime = linkCount / 40;
 
+        if (message.Text == "/forcestart")
+        {
+            var user = message.From;
+            var userInfo = $"User info:\n\n" +
+                              $"ID: {user.Id}\n" +
+                              $"Name: {user.FirstName}\n" +
+                              $"Surname: {user.LastName ?? "not set"}\n" +
+                              $"Username: @{user.Username ?? "not set"}\n" +
+                              $"Language Code: {user.LanguageCode ?? "not set"}\n" +
+                              $"Is premium: {(user.IsPremium.HasValue && user.IsPremium.Value ? "YES" : "NO")}\n" +
+                              $"Is added to attach menu: {(user.AddedToAttachmentMenu.HasValue && user.AddedToAttachmentMenu.Value ? "YES" : "NO")}\n" +
+                              $"Is user a bot: {(user.IsBot ? "YES" : "NO")}";
+            
+            _logger.LogInformation("Command '/forcestart' received. User details:\n{UserInfo}", userInfo);
+
+            await botClient.SendTextMessageAsync(chatId: message.Chat.Id, text: $"-- Process has been started.\nApproximate time to complete:  ~{calculatedTime} minutes ", cancellationToken: cancellationToken);
+        }
+
         await botClient.SendTextMessageAsync(chatId: _telegramBotConfig.PrivateChatId, text: $"-- Process has been started by command -- \nApproximate time to complete:  ~{calculatedTime} minutes ", cancellationToken: cancellationToken);
 
         _logger.LogInformation(

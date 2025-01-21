@@ -41,7 +41,7 @@ IHost host = Host.CreateDefaultBuilder(args)
             services.AddSingleton<IMessageService, MessageService>();
 
             services.AddHttpClient<TorProxyService>();
-            services.AddHttpClient<IWebsiteHeadersHandler, WebsiteHeadersHandler>();
+            services.AddSingleton<IWebsiteHeadersHandler, WebsiteHeadersHandler>();
 
             services.AddScoped<UpdateHandler>();
             services.AddScoped<ReceiverService>();

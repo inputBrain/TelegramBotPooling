@@ -1,9 +1,10 @@
 using System;
-using System.Linq;
 using System.Net;
 using System.Net.Http;
+using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
+using HtmlAgilityPack;
 using Microsoft.Extensions.Logging;
 
 namespace TelegramBotPooling.Api.Service;
@@ -11,14 +12,11 @@ namespace TelegramBotPooling.Api.Service;
 public class WebsiteHeadersHandler : IWebsiteHeadersHandler
 {
     private readonly ILogger<WebsiteHeadersHandler> _logger;
-    private readonly HttpClient _client;
-    
     private readonly HttpClient _torHttpClient;
 
-    public WebsiteHeadersHandler(ILogger<WebsiteHeadersHandler> logger, HttpClient client)
+    public WebsiteHeadersHandler(ILogger<WebsiteHeadersHandler> logger)
     {
         _logger = logger;
-        _client = client;
 
         var httpClientHandler = new HttpClientHandler
         {
@@ -26,45 +24,84 @@ public class WebsiteHeadersHandler : IWebsiteHeadersHandler
             UseProxy = true
         };
         _torHttpClient = new HttpClient(httpClientHandler);
-        _torHttpClient.Timeout = TimeSpan.FromSeconds(150);
+        _torHttpClient.Timeout = TimeSpan.FromSeconds(120);
     }
 
     public async Task<bool> HeaderHandlerAsync(string url)
     {
         try
         {
-            var cts = new CancellationTokenSource();
-            var responseTask = _torHttpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cts.Token);
-            var timeoutTask = Task.Delay(TimeSpan.FromSeconds(140), cts.Token);
+            var uriToCheck = new Uri(url);
+            try
+            {
+                await Dns.GetHostEntryAsync(uriToCheck.Host);
+            }
+            catch (SocketException)
+            {
+                _logger.LogError($"DNS resolution failed for {uriToCheck.Host}. Url: {url}. Host might be unreachable.");
+                return false;
+            }
+            
+            
+            using var ctsTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(120));
+            var responseTask = _torHttpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ctsTimeout.Token);
+            var timeoutTask = Task.Delay(TimeSpan.FromSeconds(120), ctsTimeout.Token);
             var completedTask = await Task.WhenAny(responseTask, timeoutTask);
 
             if (completedTask == timeoutTask)
             {
-                cts.Cancel();
-                _logger.LogCritical($" ===> {url} Timeout of 140 seconds elapsing. Returned false.");
+                _logger.LogCritical($" ===> {url} Timeout of 120 seconds elapsing. Returned false.");
                 return false;
             }
 
             var response = await responseTask;
-
-            // if (response.Headers.Location != null)
-            // {
-            //     var locationUrl = response.Headers.Location.ToString();
-            //
-            //     _logger.LogWarning($"Redirect detected to {locationUrl}");
-            //
-            //
-            //     if (locationUrl.Contains("lander", StringComparison.OrdinalIgnoreCase))
-            //     {
-            //         _logger.LogCritical($"Site: {url} redirected to {locationUrl}, identified as a parking page.");
-            //         return false;
-            //     }
-            // }
+            
+            if (url == "https://lgamifeed.com/VXFVJ")
+            {
+                var htmlContent = await response.Content.ReadAsStringAsync();
+                var htmlDoc = new HtmlDocument();
+                htmlDoc.LoadHtml(htmlContent);
+                
+                _logger.LogWarning($"Detected '403 Forbidden' in <h1> and 'nginx' in structure. Returning false.\n" +
+                                   $" {url}\nCONTENT: {response.Content}\n" +
+                                   $"Status code: {response.StatusCode}\n" +
+                                   $"Is success: {response.IsSuccessStatusCode}\n" +
+                                   $"ReasonPhrase: {response.ReasonPhrase}\n" +
+                                   $"INNER TEXT: {htmlDoc.DocumentNode.InnerText ?? "inner text is null"}");
+                return false;
+            }
 
             if (response.StatusCode == HttpStatusCode.Forbidden)
             {
-                return true;
+                var htmlContent = await response.Content.ReadAsStringAsync();
+                var htmlDoc = new HtmlDocument();
+                htmlDoc.LoadHtml(htmlContent);
+                
+                var h1Node = htmlDoc.DocumentNode.SelectSingleNode("//h1");
+
+                if (h1Node != null && h1Node.InnerText.Trim().Equals("403 Forbidden", StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+                
+                var hrNode = htmlDoc.DocumentNode.SelectSingleNode("//hr");
+                
+                if (hrNode == null)
+                {
+                    return true;
+                }
+
+                var nginxNode = hrNode.SelectSingleNode("following-sibling::center[text()='nginx']");
+                if (nginxNode == null)
+                {
+                    return true; 
+                }
+
+                _logger.LogWarning($"Detected '403 Forbidden' in <h1> and 'nginx' in structure. Returning false.\n {url}\nCONTENT: {htmlContent}\n\n");
+                return false;
             }
+            
+
             if (response.Content.Headers.ContentLength == 0 && response.StatusCode != HttpStatusCode.RedirectMethod)
             {
                 _logger.LogWarning($" --- Possible white page. I will check it again \nSite: {url} ");
@@ -72,7 +109,6 @@ public class WebsiteHeadersHandler : IWebsiteHeadersHandler
             }
 
             var finalUri = response.RequestMessage?.RequestUri?.ToString();
-            
 
             if (!string.IsNullOrEmpty(finalUri))
             {
@@ -87,10 +123,27 @@ public class WebsiteHeadersHandler : IWebsiteHeadersHandler
             }
 
 
-            var content = await response.Content.ReadAsStringAsync(cts.Token);
+            var content = await response.Content.ReadAsStringAsync();
             if (IsParkingPage(content))
             {
                 _logger.LogCritical($"Site: {url} identified as a parking page based on content.");
+                return false;
+            }
+            
+            if (response.StatusCode == HttpStatusCode.NotFound)
+            {
+                if (!string.IsNullOrWhiteSpace(content))
+                {
+                    if (IsErrorPage(content))
+                    {
+                        _logger.LogWarning($" ===> {url} returned 404 with error-like content.");
+                        return false;
+                    }
+            
+                    _logger.LogWarning($" ===> {url} returned 404, but appears to have meaningful content.");
+                    return true;
+                }
+                _logger.LogWarning($" ===> {url} returned 404 with no content. CONTENT: {content}\n");
                 return false;
             }
 
@@ -105,7 +158,7 @@ public class WebsiteHeadersHandler : IWebsiteHeadersHandler
         {
             if (e.Message.Contains("The SSL connection could not be established") || e.Message.Contains("The request was aborted."))
             {
-                _logger.LogDebug($"DEBUG ===>>> {url} HttpRequestException: {e.Message}");
+                _logger.LogError($"LogError IN CATCH ===>>> {url} HttpRequestException: {e.Message}");
                 return true;
             }
 
@@ -137,11 +190,41 @@ public class WebsiteHeadersHandler : IWebsiteHeadersHandler
         {
             if (content.Contains(indicator, StringComparison.OrdinalIgnoreCase))
             {
-                _logger.LogError("Parking indicator: {0}", indicator);
+                _logger.LogError("====>>>> Parking indicator: {0}", indicator);
                 return true;
             }
         }
 
+        return false;
+    }
+    
+    
+    private bool IsErrorPage(string content)
+    {
+        string[] errorIndicators = {
+            "404 error",
+            // "page not found",
+            "this page can't be found",
+            "http error 404",
+            "no webpage was found",
+            "HTTP ERROR 404",
+            // "Not Found",
+            "HTTP 404",
+            "This site can’t be reached",
+            "This page could not be found",
+            "404 Not Found",
+            "HTTP Status 400 – Bad Request",
+            "not found on this server",
+        };
+
+        foreach (var indicator in errorIndicators)
+        {
+            if (content.Contains(indicator, StringComparison.OrdinalIgnoreCase))
+            {
+                _logger.LogError($" ====>>>> Error indicator detected: {indicator}");
+                return true;
+            }
+        }
         return false;
     }
 }
