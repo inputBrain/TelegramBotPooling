@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -88,7 +89,7 @@ public class UpdateHandler : IUpdateHandler
         var notAccessibleLinksCount = 0;
 
         var linksGroupByCategoryAndThemCount = new ConcurrentDictionary<string, (int totalLinks, int accessibleLinks)>();
-        var linksWithNames = new ConcurrentDictionary<string, ConcurrentBag<string>>();
+        var linksWithNames = new Dictionary<string, List<string>>();
 
         var apiUrl = $"https://sheets.googleapis.com/v4/spreadsheets/{_googleSheetConfig!.SheetId}/values/{_googleSheetConfig.Range}?key={_googleSheetConfig.ApiKey}";
         var response = await _baseParser.ParseGet<Sheet1>(apiUrl, cancellationToken);
@@ -124,57 +125,57 @@ public class UpdateHandler : IUpdateHandler
 
         if (response?.Values != null && response.Values.Any())
         {
-            var batchedRows = BatchHelper.Batch(response.Values.Skip(1), 10);
-
-            foreach (var batch in batchedRows)
+            foreach (var row in response.Values.Skip(1))
             {
-                var tasks = batch.Select(
-                    async row => {
-                        var category = row.FirstOrDefault()?.ToString();
-                        var name = row.Skip(1).FirstOrDefault()?.ToString();
-                        var link = row.Skip(3).FirstOrDefault()?.ToString();
+                var category = row.FirstOrDefault()?.ToString();
+                var name = row.Skip(1).FirstOrDefault()?.ToString();
+                var link = row.Skip(3).FirstOrDefault()?.ToString();
 
-                        if (string.IsNullOrEmpty(link))
+                if (string.IsNullOrEmpty(link))
+                {
+                    continue;
+                }
+
+                if (!linksGroupByCategoryAndThemCount.ContainsKey(category!))
+                {
+                    linksGroupByCategoryAndThemCount[category!] = (0, 0);
+                }
+
+                var isAccessible = await _websiteHeadersHandler.HeaderHandlerAsync(link);
+                // _logger.LogDebug($"Site {link} is accessible: {isAccessible}");
+
+                if (isAccessible)
+                {
+                    linksGroupByCategoryAndThemCount[category!] = (linksGroupByCategoryAndThemCount[category!].totalLinks + 1, linksGroupByCategoryAndThemCount[category!].accessibleLinks + 1);
+                    accessibleLinksCount ++;
+                }
+                else
+                {
+                    await Task.Delay(10_000, cancellationToken);
+
+                    isAccessible = await _websiteHeadersHandler.HeaderHandlerAsync(link);
+
+                    if (isAccessible)
+                    {
+                        linksGroupByCategoryAndThemCount[category!] = (linksGroupByCategoryAndThemCount[category!].totalLinks + 1, linksGroupByCategoryAndThemCount[category!].accessibleLinks + 1);
+                        accessibleLinksCount++;
+                    }
+                    else
+                    {
+                        linksGroupByCategoryAndThemCount[category!] = (linksGroupByCategoryAndThemCount[category!].totalLinks + 1, linksGroupByCategoryAndThemCount[category!].accessibleLinks);
+
+                        linksWithNames.TryGetValue(name!, out var linkList);
+                        if (linkList == null)
                         {
-                            return;
+                            linkList = new List<string>();
+                            linksWithNames[name!] = linkList;
                         }
 
-                        linksGroupByCategoryAndThemCount.AddOrUpdate(category!, (1, 0), (key, value) => (value.totalLinks + 1, value.accessibleLinks));
+                        linksWithNames[name!].Add(link);
+                        notAccessibleLinksCount++;
+                    }
 
-                        var isAccessible = await _websiteHeadersHandler.HeaderHandlerAsync(link);
-
-                        if (isAccessible)
-                        {
-                            linksGroupByCategoryAndThemCount.AddOrUpdate(category!, (1, 1), (key, value) => (value.totalLinks, value.accessibleLinks + 1));
-                            Interlocked.Increment(ref accessibleLinksCount);
-                        }
-                        else
-                        {
-                            await Task.Delay(TimeSpan.FromSeconds(10), cancellationToken);
-
-                            isAccessible = await _websiteHeadersHandler.HeaderHandlerAsync(link);
-
-                            if (isAccessible)
-                            {
-                                linksGroupByCategoryAndThemCount.AddOrUpdate(category!, (1, 1), (key, value) => (value.totalLinks, value.accessibleLinks + 1));
-                                Interlocked.Increment(ref accessibleLinksCount);
-                            }
-                            else
-                            {
-                                linksGroupByCategoryAndThemCount.AddOrUpdate(category!, (1, 0), (key, value) => (value.totalLinks, value.accessibleLinks));
-
-                                linksWithNames.AddOrUpdate(name!, new ConcurrentBag<string> { link }, (key, list) =>
-                                {
-                                    list.Add(link);
-                                    return list;
-                                });
-
-                                Interlocked.Increment(ref notAccessibleLinksCount);
-                            }
-                        }
-                    }).ToList();
-
-                await Task.WhenAll(tasks);
+                }
             }
         }
 

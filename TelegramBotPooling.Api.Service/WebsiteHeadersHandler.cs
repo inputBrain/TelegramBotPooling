@@ -56,20 +56,30 @@ public class WebsiteHeadersHandler : IWebsiteHeadersHandler
 
             var response = await responseTask;
             
-            if (url == "https://lgamifeed.com/VXFVJ")
+            if (response.StatusCode == HttpStatusCode.Redirect || response.StatusCode == HttpStatusCode.MovedPermanently)
             {
-                var htmlContent = await response.Content.ReadAsStringAsync();
-                var htmlDoc = new HtmlDocument();
-                htmlDoc.LoadHtml(htmlContent);
-                
-                _logger.LogWarning($"Detected '403 Forbidden' in <h1> and 'nginx' in structure. Returning false.\n" +
-                                   $" {url}\nCONTENT: {response.Content}\n" +
-                                   $"Status code: {response.StatusCode}\n" +
-                                   $"Is success: {response.IsSuccessStatusCode}\n" +
-                                   $"ReasonPhrase: {response.ReasonPhrase}\n" +
-                                   $"INNER TEXT: {htmlDoc.DocumentNode.InnerText ?? "inner text is null"}");
-                return false;
+                var redirectedUri = response.Headers.Location?.ToString();
+                if (redirectedUri != null && redirectedUri.Contains("disabled", StringComparison.OrdinalIgnoreCase))
+                {
+                    _logger.LogCritical($"Redirected to disabled page: from {url} === to === > {redirectedUri}");
+                    return false;
+                }
             }
+            
+            // if (url == "https://lgamifeed.com/VXFVJ")
+            // {
+            //     var htmlContent = await response.Content.ReadAsStringAsync();
+            //     var htmlDoc = new HtmlDocument();
+            //     htmlDoc.LoadHtml(htmlContent);
+            //     
+            //     _logger.LogWarning($"Detected '403 Forbidden' in <h1> and 'nginx' in structure. Returning false.\n" +
+            //                        $" {url}\nCONTENT: {response.Content}\n" +
+            //                        $"Status code: {response.StatusCode}\n" +
+            //                        $"Is success: {response.IsSuccessStatusCode}\n" +
+            //                        $"ReasonPhrase: {response.ReasonPhrase}\n" +
+            //                        $"INNER TEXT: {htmlDoc.DocumentNode.InnerText ?? "inner text is null"}");
+            //     return false;
+            // }
 
             if (response.StatusCode == HttpStatusCode.Forbidden)
             {
