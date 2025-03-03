@@ -27,6 +27,7 @@ public class WebsiteHeadersHandler : IWebsiteHeadersHandler
         _torHttpClient.Timeout = TimeSpan.FromSeconds(120);
     }
 
+
     public async Task<bool> HeaderHandlerAsync(string url)
     {
         try
@@ -38,11 +39,11 @@ public class WebsiteHeadersHandler : IWebsiteHeadersHandler
             }
             catch (SocketException)
             {
-                _logger.LogError($"DNS resolution failed for {uriToCheck.Host}. Url: {url}. Host might be unreachable.");
+                _logger.LogError($"DNS resolution failed for {uriToCheck.Host} Url: {url}. Host might be unreachable.");
                 return false;
             }
-            
-            
+
+
             using var ctsTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(120));
             var responseTask = _torHttpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ctsTimeout.Token);
             var timeoutTask = Task.Delay(TimeSpan.FromSeconds(120), ctsTimeout.Token);
@@ -55,7 +56,7 @@ public class WebsiteHeadersHandler : IWebsiteHeadersHandler
             }
 
             var response = await responseTask;
-            
+
             if (response.StatusCode == HttpStatusCode.Redirect || response.StatusCode == HttpStatusCode.MovedPermanently)
             {
                 var redirectedUri = response.Headers.Location?.ToString();
@@ -65,37 +66,23 @@ public class WebsiteHeadersHandler : IWebsiteHeadersHandler
                     return false;
                 }
             }
-            
-            // if (url == "https://lgamifeed.com/VXFVJ")
-            // {
-            //     var htmlContent = await response.Content.ReadAsStringAsync();
-            //     var htmlDoc = new HtmlDocument();
-            //     htmlDoc.LoadHtml(htmlContent);
-            //     
-            //     _logger.LogWarning($"Detected '403 Forbidden' in <h1> and 'nginx' in structure. Returning false.\n" +
-            //                        $" {url}\nCONTENT: {response.Content}\n" +
-            //                        $"Status code: {response.StatusCode}\n" +
-            //                        $"Is success: {response.IsSuccessStatusCode}\n" +
-            //                        $"ReasonPhrase: {response.ReasonPhrase}\n" +
-            //                        $"INNER TEXT: {htmlDoc.DocumentNode.InnerText ?? "inner text is null"}");
-            //     return false;
-            // }
+
 
             if (response.StatusCode == HttpStatusCode.Forbidden)
             {
                 var htmlContent = await response.Content.ReadAsStringAsync();
                 var htmlDoc = new HtmlDocument();
                 htmlDoc.LoadHtml(htmlContent);
-                
+
                 var h1Node = htmlDoc.DocumentNode.SelectSingleNode("//h1");
 
                 if (h1Node != null && h1Node.InnerText.Trim().Equals("403 Forbidden", StringComparison.OrdinalIgnoreCase))
                 {
                     return true;
                 }
-                
+
                 var hrNode = htmlDoc.DocumentNode.SelectSingleNode("//hr");
-                
+
                 if (hrNode == null)
                 {
                     return true;
@@ -104,13 +91,13 @@ public class WebsiteHeadersHandler : IWebsiteHeadersHandler
                 var nginxNode = hrNode.SelectSingleNode("following-sibling::center[text()='nginx']");
                 if (nginxNode == null)
                 {
-                    return true; 
+                    return true;
                 }
 
                 _logger.LogWarning($"Detected '403 Forbidden' in <h1> and 'nginx' in structure. Returning false.\n {url}\nCONTENT: {htmlContent}\n\n");
                 return false;
             }
-            
+
 
             if (response.Content.Headers.ContentLength == 0 && response.StatusCode != HttpStatusCode.RedirectMethod)
             {
@@ -123,8 +110,8 @@ public class WebsiteHeadersHandler : IWebsiteHeadersHandler
             if (!string.IsNullOrEmpty(finalUri))
             {
                 var uri = new Uri(finalUri);
-                var path = uri.AbsolutePath.TrimEnd('/'); 
-                
+                var path = uri.AbsolutePath.TrimEnd('/');
+
                 if (path.Equals("/leader", StringComparison.OrdinalIgnoreCase))
                 {
                     _logger.LogCritical($"Final URL {finalUri} ends with '/leader', identified as a parking page.");
@@ -139,7 +126,7 @@ public class WebsiteHeadersHandler : IWebsiteHeadersHandler
                 _logger.LogCritical($"Site: {url} identified as a parking page based on content.");
                 return false;
             }
-            
+
             if (response.StatusCode == HttpStatusCode.NotFound)
             {
                 if (!string.IsNullOrWhiteSpace(content))
@@ -149,7 +136,7 @@ public class WebsiteHeadersHandler : IWebsiteHeadersHandler
                         _logger.LogWarning($" ===> {url} returned 404 with error-like content.");
                         return false;
                     }
-            
+
                     _logger.LogWarning($" ===> {url} returned 404, but appears to have meaningful content.");
                     return true;
                 }
@@ -166,16 +153,27 @@ public class WebsiteHeadersHandler : IWebsiteHeadersHandler
         }
         catch (HttpRequestException e)
         {
-            if (e.Message.Contains("The SSL connection could not be established") || e.Message.Contains("The request was aborted."))
+            if (e.Message.Contains("The SSL connection could not be established"))
             {
-                _logger.LogError($"LogError IN CATCH ===>>> {url} HttpRequestException: {e.Message}");
+                if (e.InnerException != null && e.InnerException.Message.Contains("TLS alert: '112'"))
+                {
+                    _logger.LogError($"LogError IN CATCH ===>>> {url} SSL TLS alert 112 error: {e.Message}");
+                    return false;
+                }
+
+                _logger.LogError($"LogError IN CATCH ===>>> {url} Other SSL error: {e.Message}\nInnerException: {e.InnerException}");
+                return true;
+            }
+            else if (e.Message.Contains("The request was aborted."))
+            {
+                _logger.LogError($"LogError IN CATCH ===>>> {url} Request aborted: {e.Message}");
                 return true;
             }
 
             _logger.LogCritical($" ===> {url} HttpRequestException: {e.Message}");
             if (e.InnerException != null)
             {
-                _logger.LogError("Inner Exception:{InnerException}: ",  e.InnerException.Message);
+                _logger.LogError("Inner Exception:{InnerException}: ", e.InnerException.Message);
             }
             return false;
         }
@@ -207,8 +205,8 @@ public class WebsiteHeadersHandler : IWebsiteHeadersHandler
 
         return false;
     }
-    
-    
+
+
     private bool IsErrorPage(string content)
     {
         string[] errorIndicators = {
@@ -225,6 +223,7 @@ public class WebsiteHeadersHandler : IWebsiteHeadersHandler
             "404 Not Found",
             "HTTP Status 400 – Bad Request",
             "not found on this server",
+            // "no longer available"
         };
 
         foreach (var indicator in errorIndicators)

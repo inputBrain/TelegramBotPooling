@@ -50,37 +50,19 @@ public class UpdateHandler : IUpdateHandler
 
     public async Task HandleUpdateAsync(ITelegramBotClient _, Update update, CancellationToken cancellationToken)
     {
-        _logger.LogInformation("Username {Username} with Id {Id} | sent a message: {Message}",
-            update.Message!.From!.Username,
-            update.Message.From.Id,
-            update.Message.Text
-        );
-
-        var handler = update switch
+        if (update.Message is { } message)
         {
-            { Message: { } message }                       => BotOnMessageReceived(message, cancellationToken),
-            { EditedMessage: { } message }                 => BotOnMessageReceived(message, cancellationToken),
-            _ => throw new ArgumentOutOfRangeException(nameof(update), update, null)
-        };
-
-        await handler;
+            await BotOnMessageReceived(message, cancellationToken);
+        }
     }
 
 
     private async Task BotOnMessageReceived(Message message, CancellationToken cancellationToken)
     {
-        _logger.LogInformation("Receive message type: {MessageType}", message.Type);
-        if (message.Text is not { } messageText)
-            return;
-
-        var action = messageText.Split(' ')[0] switch
+        if (message.Text != null && (message.Text.StartsWith("/forcestart") || message.Text.StartsWith("/forcestart@notification_ax_link_test_bot")))
         {
-            "/forcestart"                                      => StartWebsiteHandler(_botClient, message, cancellationToken),
-            "/forcestart@notification_ax_link_test_bot"        => StartWebsiteHandler(_botClient, message, cancellationToken),
-            _                                                  => throw new ArgumentOutOfRangeException()
-        };
-        var sentMessage = await action;
-        _logger.LogInformation("The message was sent with id: {SentMessageId}", sentMessage.MessageId);
+            await StartWebsiteHandler(_botClient, message, cancellationToken);
+        }
     }
 
     public  async Task<Message> StartWebsiteHandler(ITelegramBotClient botClient, Message message, CancellationToken cancellationToken)
