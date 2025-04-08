@@ -37,37 +37,6 @@ public class WebsiteHeadersHandler : IWebsiteHeadersHandler
         using var cts = new CancellationTokenSource(_timeout);
         try
         {
-            // var uriToCheck = new Uri(url);
-            // try
-            // {
-            //     var dnsTask = Dns.GetHostEntryAsync(uriToCheck.Host, cts.Token);
-            //     if (await Task.WhenAny(dnsTask, Task.Delay(_timeout, cts.Token)) != dnsTask)
-            //     {
-            //         _logger.LogError($"DNS resolution timed out for {uriToCheck.Host} Url: {url}");
-            //         return false;
-            //     }
-            //     try
-            //     {
-            //         await dnsTask;
-            //     }
-            //     catch (SocketException)
-            //     {
-            //         _logger.LogError($"DNS resolution failed for {uriToCheck.Host} Url: {url}. Host might be unreachable.");
-            //         return false;
-            //     }
-            // }
-            // catch (TaskCanceledException)
-            // {
-            //     _logger.LogError($"DNS resolution was canceled for {uriToCheck.Host} Url: {url}");
-            //     return false;
-            // }
-            // catch (Exception ex)
-            // {
-            //     _logger.LogError($"Unexpected error during DNS resolution for {url}: {ex.Message}");
-            //     return false;
-            // }
-
-
             HttpResponseMessage response;
             try
             {
@@ -99,6 +68,13 @@ public class WebsiteHeadersHandler : IWebsiteHeadersHandler
                 }
             }
 
+            var statusCode = (int)response.StatusCode;
+
+            if (statusCode == 522)
+            {
+                _logger.LogWarning($"==== {url} with status code {response.StatusCode}. Returned false");
+                return false;
+            }
 
             if (response.StatusCode == HttpStatusCode.Forbidden)
             {
