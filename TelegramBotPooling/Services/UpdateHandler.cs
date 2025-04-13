@@ -11,6 +11,7 @@ using Telegram.Bot;
 using Telegram.Bot.Exceptions;
 using Telegram.Bot.Polling;
 using Telegram.Bot.Types;
+using Telegram.Bot.Types.Enums;
 using TelegramBotPooling.Api.Service;
 using TelegramBotPooling.Configs;
 using TelegramBotPooling.ExternalApi.GoogleSheets;
@@ -61,7 +62,40 @@ public class UpdateHandler : IUpdateHandler
     {
         if (message.Text != null && (message.Text.StartsWith("/forcestart") || message.Text.StartsWith("/forcestart@notification_ax_link_test_bot")))
         {
-            await StartWebsiteHandler(_botClient, message, cancellationToken);
+            if (message.Chat.Id == _telegramBotConfig.PrivateChatId)
+            {
+                await StartWebsiteHandler(_botClient, message, cancellationToken);
+            }
+            else if (message.Chat.Type == ChatType.Private)
+            {
+                var isAuthorized = await CheckUserInPrivateGroup(message.From!.Id, cancellationToken);
+                
+                if (isAuthorized)
+                {
+                    await StartWebsiteHandler(_botClient, message, cancellationToken);
+                }
+                else
+                {
+                    var user = message.From;
+                    var unauthorizedMessage = $"⚠️ UNAUTHORIZED ACCESS ATTEMPT ⚠️\n\n" +
+                                           $"ID: {user.Id}\n" +
+                                           $"Name: {user.FirstName}\n" +
+                                           $"Surname: {user.LastName ?? "not set"}\n" +
+                                           $"Username: @{user.Username ?? "not set"}\n" +
+                                           $"Language Code: {user.LanguageCode ?? "not set"}\n" +
+                                           $"Is premium: {(user.IsPremium.HasValue && user.IsPremium.Value ? "YES" : "NO")}\n" +
+                                           $"Is added to attach menu: {(user.AddedToAttachmentMenu.HasValue && user.AddedToAttachmentMenu.Value ? "YES" : "NO")}\n" +
+                                           $"Is user a bot: {(user.IsBot ? "YES" : "NO")}" +
+                                           $"\n\n🚨 Report has been sent to the developer group 🚨" +
+                                           $"\n\n💬 If you believe this is a mistake, please contact the developer to resolve the issue and gain access to use this bot.";
+                    
+                    await _botClient.SendTextMessageAsync(
+                        chatId: message.Chat.Id,
+                        text: unauthorizedMessage,
+                        cancellationToken: cancellationToken);
+                }
+            }
+            // await StartWebsiteHandler(_botClient, message, cancellationToken);
         }
     }
 
@@ -183,5 +217,23 @@ public class UpdateHandler : IUpdateHandler
 
         if (exception is RequestException)
             await Task.Delay(TimeSpan.FromSeconds(2), cancellationToken);
+    }
+    
+    
+    private async Task<bool> CheckUserInPrivateGroup(long userId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var chatMember = await _botClient.GetChatMemberAsync(chatId: _telegramBotConfig.PrivateChatId, userId: userId, cancellationToken: cancellationToken);
+
+            return chatMember.Status == ChatMemberStatus.Member || 
+                   chatMember.Status == ChatMemberStatus.Administrator || 
+                   chatMember.Status == ChatMemberStatus.Creator;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error checking user in private group: {UserId}", userId);
+            return false;
+        }
     }
 }
