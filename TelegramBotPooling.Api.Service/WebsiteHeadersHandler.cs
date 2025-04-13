@@ -1,7 +1,6 @@
 using System;
 using System.Net;
 using System.Net.Http;
-using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
 using HtmlAgilityPack;
@@ -12,6 +11,7 @@ namespace TelegramBotPooling.Api.Service;
 public class WebsiteHeadersHandler : IWebsiteHeadersHandler
 {
     private readonly ILogger<WebsiteHeadersHandler> _logger;
+
     private readonly HttpClient _torHttpClient;
 
     private readonly TimeSpan _timeout = TimeSpan.FromSeconds(120);
@@ -71,6 +71,12 @@ public class WebsiteHeadersHandler : IWebsiteHeadersHandler
             var statusCode = (int)response.StatusCode;
 
             if (statusCode == 522)
+            {
+                _logger.LogWarning($"==== {url} with status code {response.StatusCode}. Returned false");
+                return false;
+            }
+
+            if (statusCode == 526)
             {
                 _logger.LogWarning($"==== {url} with status code {response.StatusCode}. Returned false");
                 return false;
