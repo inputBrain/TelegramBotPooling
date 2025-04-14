@@ -89,6 +89,8 @@ public class UpdateHandler : IUpdateHandler
                                            $"\n\n🚨 Report has been sent to the developer group 🚨" +
                                            $"\n\n💬 If you believe this is a mistake, please contact the developer to resolve the issue and gain access to use this bot.";
                     
+                    _logger.LogWarning("{Message}", unauthorizedMessage);
+                    
                     await _botClient.SendTextMessageAsync(
                         chatId: message.Chat.Id,
                         text: unauthorizedMessage,
