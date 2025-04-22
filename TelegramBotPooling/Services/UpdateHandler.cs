@@ -169,7 +169,7 @@ public class UpdateHandler : IUpdateHandler
                 }
                 else
                 {
-                    await Task.Delay(10_000, cancellationToken);
+                    await Task.Delay(30_000, cancellationToken);
 
                     isAccessible = await _websiteHeadersHandler.HeaderHandlerAsync(link);
 

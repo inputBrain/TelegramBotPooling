@@ -265,6 +265,7 @@ public class WebsiteHeadersHandler : IWebsiteHeadersHandler
             string[] parkingIndicators =
             {
                 "domain is for sale",
+                "related searches",
                 "this domain is parked",
                 "buy this domain", 
                 "domain name for sale",
