@@ -232,6 +232,11 @@ public class WebsiteHeadersHandler : IWebsiteHeadersHandler
                 _logger.LogError($"LogError IN CATCH ===>>> {url} SSL TLS alert 112 error: {e.Message}");
                 return false;
             }
+            if (e.InnerException != null && e.InnerException.Message.Contains("The remote certificate is invalid according to the validation procedure"))
+            {
+                _logger.LogError($"{url} === returned false. The remote certificate is invalid. Message: {e.Message}");
+                return false;
+            }
 
             _logger.LogError($"LogError IN CATCH ===>>> {url} Other SSL error: {e.Message}\nInnerException: {e.InnerException}");
             return true;
@@ -311,7 +316,7 @@ public class WebsiteHeadersHandler : IWebsiteHeadersHandler
                 "HTTP 404", 
                 "This site can't be reached",
                 "This page could not be found", 
-                "404 Not Found", 
+                // "404 Not Found",
                 "HTTP Status 400 – Bad Request",
                 "not found on this server",
                 // "no longer available"
