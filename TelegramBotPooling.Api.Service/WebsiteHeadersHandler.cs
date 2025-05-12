@@ -237,9 +237,15 @@ public class WebsiteHeadersHandler : IWebsiteHeadersHandler
                 _logger.LogError($"{url} === returned false. The remote certificate is invalid. Message: {e.Message}");
                 return false;
             }
+            if (e.InnerException != null && e.InnerException.Message.Contains("SSL Handshake failed with OpenSSL error"))
+            {
+                _logger.LogError($"{url} === returned false. SSL Handshake failed with OpenSSL error. Message: {e.Message}");
+                return false;
+            }
 
             _logger.LogError($"LogError IN CATCH ===>>> {url} Other SSL error: {e.Message}\nInnerException: {e.InnerException}");
             return true;
+            
         }
         if (e.Message.Contains("The request was aborted."))
         {
