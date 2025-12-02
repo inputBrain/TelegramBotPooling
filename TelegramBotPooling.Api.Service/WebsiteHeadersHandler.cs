@@ -1,6 +1,9 @@
 using System;
+using System.IO;
 using System.Net;
 using System.Net.Http;
+using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using HtmlAgilityPack;
@@ -57,7 +60,6 @@ public class WebsiteHeadersHandler : IWebsiteHeadersHandler
                 return false;
             }
 
-
             if (response.StatusCode == HttpStatusCode.Redirect || response.StatusCode == HttpStatusCode.MovedPermanently)
             {
                 var redirectedUri = response.Headers.Location?.ToString();
@@ -81,77 +83,7 @@ public class WebsiteHeadersHandler : IWebsiteHeadersHandler
                 _logger.LogWarning($"==== {url} with status code {response.StatusCode}. Returned false");
                 return false;
             }
-
-            if (response.StatusCode == HttpStatusCode.Forbidden)
-            {
-                string htmlContent;
-                try
-                {
-                    htmlContent = await ReadContentWithTimeoutAsync(response, cts.Token);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning($"Error reading content for {url} with status {response.StatusCode}: {ex.Message}");
-                    return false;
-                }
-
-                try
-                {
-                    var htmlDoc = new HtmlDocument();
-                    htmlDoc.LoadHtml(htmlContent);
-
-                    var h1Node = htmlDoc.DocumentNode.SelectSingleNode("//h1");
-
-                    if (h1Node != null && h1Node.InnerText.Trim().Equals("403 Forbidden", StringComparison.OrdinalIgnoreCase))
-                    {
-                        return true;
-                    }
-
-                    var hrNode = htmlDoc.DocumentNode.SelectSingleNode("//hr");
-
-                    if (hrNode == null)
-                    {
-                        return true;
-                    }
-
-                    var nginxNode = hrNode.SelectSingleNode("following-sibling::center[text()='nginx']");
-                    if (nginxNode == null)
-                    {
-                        return true;
-                    }
-
-                    _logger.LogWarning($"Detected '403 Forbidden' in <h1> and 'nginx' in structure. Returning false.\n {url}\nCONTENT: {htmlContent}\n\n");
-                    return false;
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning($"Error parsing HTML content for {url}: {ex.Message}");
-                    return true;
-                }
-            }
-
-
-            if (response.Content.Headers.ContentLength == 0 && response.StatusCode != HttpStatusCode.RedirectMethod)
-            {
-                _logger.LogWarning($" --- Possible white page. I will check it again \nSite: {url} ");
-                return true;
-            }
-
-            var finalUri = response.RequestMessage?.RequestUri?.ToString();
-
-            if (!string.IsNullOrEmpty(finalUri))
-            {
-                var uri = new Uri(finalUri);
-                var path = uri.AbsolutePath.TrimEnd('/');
-
-                if (path.Equals("/leader", StringComparison.OrdinalIgnoreCase))
-                {
-                    _logger.LogCritical($"Final URL {finalUri} ends with '/leader', identified as a parking page.");
-                    return false;
-                }
-            }
-
-
+            
             string content;
             try
             {
@@ -168,9 +100,21 @@ public class WebsiteHeadersHandler : IWebsiteHeadersHandler
                 _logger.LogCritical($"Site: {url} identified as a parking page based on content.");
                 return false;
             }
-
+            
+            if (IsErrorPageByTitle(content))
+            {
+                _logger.LogWarning($" <----temp_effective_check----> {url} has error indicator in page title.");
+                // return false;
+            }
+            
             if (response.StatusCode == HttpStatusCode.NotFound)
             {
+                if (IsStrictNginx404Page(content))
+                {
+                    _logger.LogWarning($"Detected strict nginx 404 page structure for {url}. Returning false.");
+                    return false;
+                }
+                
                 if (!string.IsNullOrWhiteSpace(content))
                 {
                     if (IsErrorPage(content))
@@ -178,14 +122,47 @@ public class WebsiteHeadersHandler : IWebsiteHeadersHandler
                         _logger.LogWarning($" ===> {url} returned 404 with error-like content.");
                         return false;
                     }
+                    
+                    // if (IsErrorPageByTitle(content))
+                    // {
+                    //     _logger.LogWarning($" ===> {url} has error indicator in page title. not returned any value");
+                    //     // return false;
+                    // }
 
                     _logger.LogWarning($" ===> {url} returned 404, but appears to have meaningful content.");
                     return true;
                 }
-                _logger.LogWarning($" ===> {url} returned 404 with no content. CONTENT: {content}\n");
+
+                _logger.LogWarning($" ===> {url} returned 404 with no content. CONTENT: {content}");
                 return false;
             }
+            
+            if (response.Content.Headers.ContentLength == 0 && response.StatusCode != HttpStatusCode.RedirectMethod)
+            {
+                _logger.LogWarning($" --- Possible white page. I will check it again \nSite: {url} ");
+                
+                if (await IsWhitePageAsync(response, cts.Token))
+                {
+                    _logger.LogWarning($"Site {url} detected as white page (no visible text in first 16 KB)");
+                    // return false;
+                }
+                
+                return true;
+            }
 
+            var finalUri = response.RequestMessage?.RequestUri?.ToString();
+
+            if (!string.IsNullOrEmpty(finalUri))
+            {
+                var uri = new Uri(finalUri);
+                var path = uri.AbsolutePath.TrimEnd('/');
+
+                if (path.Equals("/leader", StringComparison.OrdinalIgnoreCase))
+                {
+                    _logger.LogCritical($"Final URL {finalUri} ends with '/leader', identified as a parking page.");
+                    return false;
+                }
+            }
             return true;
         }
         catch (TaskCanceledException)
@@ -221,7 +198,89 @@ public class WebsiteHeadersHandler : IWebsiteHeadersHandler
             return string.Empty;
         }
     }
+    
+    
+    private async Task<bool> IsWhitePageAsync(HttpResponseMessage response, CancellationToken token)
+    {
+        const int maxBytes = 16 * 1024;
+        Stream stream;
 
+        try
+        {
+            stream = await response.Content.ReadAsStreamAsync(token);
+        }
+        catch (OperationCanceledException)
+        {
+            _logger.LogWarning("ReadAsStreamAsync was canceled or timed out.");
+            return false;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning($"Failed to get response stream: {ex.Message}");
+            return false;
+        }
+
+        await using (stream)
+        {
+            using var ms = new MemoryStream();
+            var buffer = new byte[4096];
+            var totalRead = 0;
+            
+            try
+            {
+                while (totalRead < maxBytes)
+                {
+                    int toRead = Math.Min(buffer.Length, maxBytes - totalRead);
+                    int read = await stream.ReadAsync(buffer, 0, toRead, token);
+                    if (read == 0)
+                        break;
+
+                    await ms.WriteAsync(buffer, 0, read, token);
+                    totalRead += read;
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                _logger.LogWarning("Reading from the stream was canceled or timed out.");
+                return false;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning($"Error while reading from the stream: {ex.Message}");
+                return false;
+            }
+
+            string snippet;
+            try
+            {
+                snippet = Encoding.UTF8.GetString(ms.ToArray());
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning($"Failed to decode the first {totalRead} bytes: {ex.Message}");
+                return false;
+            }
+
+
+            var textOnly = Regex.Replace(snippet, "<[^>]+>", "").Trim();
+
+            return string.IsNullOrWhiteSpace(textOnly);
+        }
+    }
+
+    
+    private bool IsStrictNginx404Page(string content)
+    {
+        const string expected =
+            "<html><head><title>404 Not Found</title></head>" +
+            "<body><center><h1>404 Not Found</h1></center>" +
+            "<hr><center>nginx</center></body></html>";
+
+        var normalizedContent = Regex.Replace(content, @"\s+", "", RegexOptions.IgnoreCase);
+        var normalizedExpected = Regex.Replace(expected,   @"\s+", "", RegexOptions.None);
+
+        return normalizedContent.Equals(normalizedExpected, StringComparison.OrdinalIgnoreCase);
+    }
 
     private bool HandleHttpRequestException(string url, HttpRequestException e)
     {
@@ -239,7 +298,7 @@ public class WebsiteHeadersHandler : IWebsiteHeadersHandler
             }
             if (e.InnerException != null && e.InnerException.Message.Contains("SSL Handshake failed with OpenSSL error"))
             {
-                _logger.LogError($"{url} === returned false. SSL Handshake failed with OpenSSL error. Message: {e.Message}");
+                _logger.LogError($"{url} === returned false. The remote certificate is invalid. Message: {e.Message}");
                 return false;
             }
 
@@ -313,6 +372,9 @@ public class WebsiteHeadersHandler : IWebsiteHeadersHandler
             string[] errorIndicators =
             {
                 "404 error",
+                "403 Error",
+                "404 page not found",
+                "404 not found",
                 // "page not found",
                 "this page can't be found", 
                 "http error 404", 
@@ -322,7 +384,7 @@ public class WebsiteHeadersHandler : IWebsiteHeadersHandler
                 "HTTP 404", 
                 "This site can't be reached",
                 "This page could not be found", 
-                // "404 Not Found",
+                // "404 Not Found", 
                 "HTTP Status 400 – Bad Request",
                 "not found on this server",
                 // "no longer available"
@@ -341,6 +403,57 @@ public class WebsiteHeadersHandler : IWebsiteHeadersHandler
         catch (Exception ex)
         {
             _logger.LogError($"Error checking error page: {ex.Message}");
+            return false;
+        }
+    }
+    
+    
+    
+    private bool IsErrorPageByTitle(string htmlContent)
+    {
+        try
+        {
+            var htmlDoc = new HtmlDocument();
+            htmlDoc.LoadHtml(htmlContent);
+
+            var titleNode = htmlDoc.DocumentNode.SelectSingleNode("//title");
+        
+            if (titleNode == null)
+            {
+                return false;
+            }
+
+            var title = titleNode.InnerText.Trim();
+
+            string[] errorTitleIndicators =
+            {
+                "HTTP 403",
+                "502 Bad Gateway",
+                "Error 404",
+                "Page Not Found",
+                "Not Found",
+                "Internal Server Error",
+                "Service Unavailable",
+                "Gateway Timeout",
+                "Bad Request",
+                "This site can't be reached",
+                "This page could not be found"
+            };
+
+            foreach (var indicator in errorTitleIndicators)
+            {
+                if (title.Contains(indicator, StringComparison.OrdinalIgnoreCase))
+                {
+                    _logger.LogWarning($"Error indicator in title: '{indicator}' (Full title: '{title}')");
+                    return true;
+                }
+            }
+
+            return false;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError($"Error checking page title: {ex.Message}");
             return false;
         }
     }
