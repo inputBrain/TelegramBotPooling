@@ -104,7 +104,7 @@ public class WebsiteHeadersHandler : IWebsiteHeadersHandler
             if (IsErrorPageByTitle(content))
             {
                 _logger.LogWarning($" <----temp_effective_check----> {url} has error indicator in page title.");
-                // return false;
+                return false;
             }
             
             if (response.StatusCode == HttpStatusCode.NotFound)
